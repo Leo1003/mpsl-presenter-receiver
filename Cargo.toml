@@ -12,6 +12,7 @@ cortex-m-semihosting = "0.3.7"
 panic-halt = "0.2.0"
 usb-device = "0.2.7"
 panic-semihosting = "0.5.6"
+usbd-hid = "0.4.5"
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"

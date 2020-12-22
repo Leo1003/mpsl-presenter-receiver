@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use cortex_m::interrupt;
 use cortex_m_rt::entry;
 use panic_semihosting as _;
 use stm32l4xx_hal::otg_fs::{UsbBus, USB};
@@ -8,6 +9,9 @@ use stm32l4xx_hal::prelude::*;
 use stm32l4xx_hal::rcc::{PllConfig, PllDivider, PllSource};
 use stm32l4xx_hal::stm32::Peripherals;
 use usb_device::prelude::*;
+use usbd_hid::descriptor::generator_prelude::*;
+use usbd_hid::descriptor::MouseReport;
+use usbd_hid::hid_class::HIDClass;
 
 static mut EP_MEMORY: [u32; 320] = [0; 320];
 
@@ -74,6 +78,10 @@ fn main() -> ! {
     enable_usb_pwr();
 
     let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
+    let mut gpioc = dp.GPIOC.split(&mut rcc.ahb2);
+    let usr_btn = gpioc
+        .pc13
+        .into_pull_up_input(&mut gpioc.moder, &mut gpioc.pupdr);
 
     let usb = USB {
         usb_global: dp.OTG_FS_GLOBAL,
@@ -91,7 +99,33 @@ fn main() -> ! {
     };
     let usb_bus = UsbBus::new(usb, unsafe { &mut EP_MEMORY });
 
+    let mut usb_hid = HIDClass::new(&usb_bus, MouseReport::desc(), 100);
+
+    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
+        .manufacturer("Leo")
+        .product("Smart presenter")
+        .serial_number("TEST0000")
+        .device_class(0xEF)
+        .build();
+
+    let mut btn_state = false;
+
+    let action = MouseReport {
+        x: 8,
+        y: -8,
+        buttons: 0,
+    };
+
     loop {
-        // your code goes here
+        if usb_dev.poll(&mut [&mut usb_hid]) {}
+
+        if usr_btn.is_low().unwrap() {
+            btn_state = true;
+        } else if btn_state && usr_btn.is_high().unwrap() {
+            btn_state = false;
+            interrupt::free(|_| {
+                usb_hid.push_input(&action).ok();
+            });
+        }
     }
 }
