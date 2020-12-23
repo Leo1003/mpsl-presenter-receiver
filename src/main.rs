@@ -132,7 +132,7 @@ fn main() -> ! {
         USB_DEV.borrow(cs).replace(Some(
             UsbDeviceBuilder::new(
                 unsafe { USB_BUS.as_ref().unwrap() },
-                UsbVidPid(0x16c0, 0x27dd),
+                UsbVidPid(0x16c0, 0x0487),
             )
             .manufacturer("Leo")
             .product("Smart presenter")
