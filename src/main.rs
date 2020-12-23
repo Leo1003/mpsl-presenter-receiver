@@ -1,19 +1,32 @@
 #![no_std]
 #![no_main]
 
-use cortex_m::interrupt;
-use cortex_m_rt::entry;
+#[macro_use]
+extern crate cortex_m_rt;
+
+use core::cell::RefCell;
+
+use cortex_m::interrupt::{free, Mutex};
+use cortex_m::peripheral::NVIC;
 use panic_semihosting as _;
+use stm32l4xx_hal::interrupt;
 use stm32l4xx_hal::otg_fs::{UsbBus, USB};
 use stm32l4xx_hal::prelude::*;
 use stm32l4xx_hal::rcc::{PllConfig, PllDivider, PllSource};
-use stm32l4xx_hal::stm32::Peripherals;
-use usb_device::prelude::*;
+use stm32l4xx_hal::stm32::{Interrupt, Peripherals};
+use usb_device::{class_prelude::UsbBusAllocator, prelude::*};
 use usbd_hid::descriptor::generator_prelude::*;
 use usbd_hid::descriptor::MouseReport;
 use usbd_hid::hid_class::HIDClass;
 
 static mut EP_MEMORY: [u32; 320] = [0; 320];
+
+type MutexCell<T> = Mutex<RefCell<Option<T>>>;
+type UsbType = UsbBus<USB>;
+
+static mut USB_BUS: Option<UsbBusAllocator<UsbType>> = None;
+static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
+static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 
 fn enable_crs() {
     use stm32l4xx_hal::stm32::{CRS, RCC};
@@ -98,17 +111,10 @@ fn main() -> ! {
         hclk: clocks.hclk(),
     };
     let usb_bus = UsbBus::new(usb, unsafe { &mut EP_MEMORY });
-
-    let mut usb_hid = HIDClass::new(&usb_bus, MouseReport::desc(), 100);
-
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .manufacturer("Leo")
-        .product("Smart presenter")
-        .serial_number("TEST0000")
-        .device_class(0xEF)
-        .build();
-
-    let mut btn_state = false;
+    free(|_| unsafe {
+        // Safety: Interrupt-free section
+        USB_BUS = Some(usb_bus);
+    });
 
     let action = MouseReport {
         x: 8,
@@ -116,16 +122,56 @@ fn main() -> ! {
         buttons: 0,
     };
 
+    free(|cs| {
+        // Safety: Interrupt-free section
+        USB_HID.borrow(cs).replace(Some(HIDClass::new(
+            unsafe { USB_BUS.as_ref().unwrap() },
+            MouseReport::desc(),
+            100,
+        )));
+        USB_DEV.borrow(cs).replace(Some(
+            UsbDeviceBuilder::new(
+                unsafe { USB_BUS.as_ref().unwrap() },
+                UsbVidPid(0x16c0, 0x27dd),
+            )
+            .manufacturer("Leo")
+            .product("Smart presenter")
+            .serial_number("TEST0000")
+            .build(),
+        ))
+    });
+
+    unsafe {
+        NVIC::unmask(Interrupt::OTG_FS);
+    }
+
+    let mut btn_state = false;
+
     loop {
-        if usb_dev.poll(&mut [&mut usb_hid]) {}
+        //if usb_dev.poll(&mut [&mut usb_hid]) {}
 
         if usr_btn.is_low().unwrap() {
             btn_state = true;
         } else if btn_state && usr_btn.is_high().unwrap() {
             btn_state = false;
-            interrupt::free(|_| {
+            free(|cs| {
+                let mut usb_hid_ref = USB_HID.borrow(cs).borrow_mut();
+                let usb_hid = usb_hid_ref.as_mut().unwrap();
+
                 usb_hid.push_input(&action).ok();
             });
         }
     }
+}
+
+#[interrupt]
+fn OTG_FS() {
+    free(|cs| {
+        let mut usb_dev_ref = USB_DEV.borrow(cs).borrow_mut();
+        let usb_dev = usb_dev_ref.as_mut().unwrap();
+        let mut usb_hid_ref = USB_HID.borrow(cs).borrow_mut();
+        let usb_hid = usb_hid_ref.as_mut().unwrap();
+
+        usb_dev.poll(&mut [usb_hid]);
+    });
 }
