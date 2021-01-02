@@ -5,6 +5,7 @@
 extern crate cortex_m_rt;
 
 use core::cell::RefCell;
+use core::fmt::Write as _;
 
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
@@ -18,6 +19,9 @@ use usb_device::{class_prelude::UsbBusAllocator, prelude::*};
 use usbd_hid::descriptor::generator_prelude::*;
 use usbd_hid::descriptor::MouseReport;
 use usbd_hid::hid_class::HIDClass;
+use usbd_serial::SerialPort;
+
+use usb_serial::SerialWriter;
 
 static mut EP_MEMORY: [u32; 320] = [0; 320];
 
@@ -27,6 +31,9 @@ type UsbType = UsbBus<USB>;
 static mut USB_BUS: Option<UsbBusAllocator<UsbType>> = None;
 static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
+static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
+
+mod usb_serial;
 
 fn enable_crs() {
     use stm32l4xx_hal::stm32::{CRS, RCC};
@@ -124,6 +131,9 @@ fn main() -> ! {
 
     free(|cs| {
         // Safety: Interrupt-free section
+        USB_SER
+            .borrow(cs)
+            .replace(Some(SerialPort::new(unsafe { USB_BUS.as_ref().unwrap() })));
         USB_HID.borrow(cs).replace(Some(HIDClass::new(
             unsafe { USB_BUS.as_ref().unwrap() },
             MouseReport::desc(),
@@ -141,6 +151,8 @@ fn main() -> ! {
         ))
     });
 
+    write!(SerialWriter, "USB initialize completed\r\n").ok();
+
     unsafe {
         NVIC::unmask(Interrupt::OTG_FS);
     }
@@ -148,8 +160,6 @@ fn main() -> ! {
     let mut btn_state = false;
 
     loop {
-        //if usb_dev.poll(&mut [&mut usb_hid]) {}
-
         if usr_btn.is_low().unwrap() {
             btn_state = true;
         } else if btn_state && usr_btn.is_high().unwrap() {
@@ -159,6 +169,7 @@ fn main() -> ! {
                 let usb_hid = usb_hid_ref.as_mut().unwrap();
 
                 usb_hid.push_input(&action).ok();
+                write!(SerialWriter, "action: {:?}\r\n", &action).ok();
             });
         }
     }
@@ -171,7 +182,12 @@ fn OTG_FS() {
         let usb_dev = usb_dev_ref.as_mut().unwrap();
         let mut usb_hid_ref = USB_HID.borrow(cs).borrow_mut();
         let usb_hid = usb_hid_ref.as_mut().unwrap();
+        let mut usb_ser_ref = USB_SER.borrow(cs).borrow_mut();
+        let usb_ser = usb_ser_ref.as_mut().unwrap();
 
-        usb_dev.poll(&mut [usb_hid]);
+        let mut buf = [0u8; 64];
+        if usb_dev.poll(&mut [usb_hid, usb_ser]) {
+            usb_ser.read(&mut buf).ok();
+        }
     });
 }
