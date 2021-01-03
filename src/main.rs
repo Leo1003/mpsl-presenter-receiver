@@ -3,25 +3,29 @@
 
 #[macro_use]
 extern crate cortex_m_rt;
+#[macro_use]
+extern crate log;
 
 use core::cell::RefCell;
-use core::fmt::Write as _;
 
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
 use panic_semihosting as _;
-use stm32l4xx_hal::interrupt;
-use stm32l4xx_hal::otg_fs::{UsbBus, USB};
-use stm32l4xx_hal::prelude::*;
-use stm32l4xx_hal::rcc::{PllConfig, PllDivider, PllSource};
-use stm32l4xx_hal::stm32::{Interrupt, Peripherals};
+use stm32l4xx_hal::{
+    interrupt,
+    otg_fs::{UsbBus, USB},
+    prelude::*,
+    rcc::{PllConfig, PllDivider, PllSource},
+    spi::Spi,
+    stm32::{Interrupt, Peripherals},
+};
 use usb_device::{class_prelude::UsbBusAllocator, prelude::*};
 use usbd_hid::descriptor::generator_prelude::*;
 use usbd_hid::descriptor::MouseReport;
 use usbd_hid::hid_class::HIDClass;
 use usbd_serial::SerialPort;
 
-use usb_serial::SerialWriter;
+use usb_logger::UsbLogger;
 
 static mut EP_MEMORY: [u32; 320] = [0; 320];
 
@@ -33,7 +37,9 @@ static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 
-mod usb_serial;
+mod usb_logger;
+
+static USB_LOGGER: UsbLogger = UsbLogger;
 
 fn enable_crs() {
     use stm32l4xx_hal::stm32::{CRS, RCC};
@@ -151,7 +157,8 @@ fn main() -> ! {
         ))
     });
 
-    write!(SerialWriter, "USB initialize completed\r\n").ok();
+    USB_LOGGER.init();
+    info!("USB initialized");
 
     unsafe {
         NVIC::unmask(Interrupt::OTG_FS);
@@ -169,7 +176,7 @@ fn main() -> ! {
                 let usb_hid = usb_hid_ref.as_mut().unwrap();
 
                 usb_hid.push_input(&action).ok();
-                write!(SerialWriter, "action: {:?}\r\n", &action).ok();
+                debug!("action: {:?}", &action);
             });
         }
     }
@@ -186,7 +193,7 @@ fn OTG_FS() {
         let usb_ser = usb_ser_ref.as_mut().unwrap();
 
         let mut buf = [0u8; 64];
-        if usb_dev.poll(&mut [usb_hid, usb_ser]) {
+        if usb_dev.poll(&mut [usb_ser, usb_hid]) {
             usb_ser.read(&mut buf).ok();
         }
     });
