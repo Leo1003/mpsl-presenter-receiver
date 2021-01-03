@@ -10,8 +10,10 @@ use core::cell::RefCell;
 
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
+use embedded_nrf24l01::{setup::*, Configuration, DataRate, RxMode, StandbyMode, TxMode, NRF24L01};
 use panic_semihosting as _;
 use stm32l4xx_hal::{
+    gpio::{Edge, Input, PullUp, PA8},
     interrupt,
     otg_fs::{UsbBus, USB},
     prelude::*,
@@ -36,6 +38,7 @@ static mut USB_BUS: Option<UsbBusAllocator<UsbType>> = None;
 static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
+static NRF24_IRQ: MutexCell<PA8<Input<PullUp>>> = Mutex::new(RefCell::new(None));
 
 mod usb_logger;
 
@@ -81,7 +84,7 @@ fn enable_pllq_48mhz() {
 
 #[entry]
 fn main() -> ! {
-    let dp = Peripherals::take().unwrap();
+    let mut dp = Peripherals::take().unwrap();
 
     let mut flash = dp.FLASH.constrain();
     let mut rcc = dp.RCC.constrain();
@@ -104,6 +107,7 @@ fn main() -> ! {
     enable_usb_pwr();
 
     let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
+    let mut gpiob = dp.GPIOB.split(&mut rcc.ahb2);
     let mut gpioc = dp.GPIOC.split(&mut rcc.ahb2);
     let usr_btn = gpioc
         .pc13
@@ -160,8 +164,59 @@ fn main() -> ! {
     USB_LOGGER.init();
     info!("USB initialized");
 
+    let spi_sck = gpiob
+        .pb3
+        .into_floating_input(&mut gpiob.moder, &mut gpiob.pupdr)
+        .into_af5(&mut gpiob.moder, &mut gpiob.afrl);
+    let spi_miso = gpiob
+        .pb4
+        .into_floating_input(&mut gpiob.moder, &mut gpiob.pupdr)
+        .into_af5(&mut gpiob.moder, &mut gpiob.afrl);
+    let spi_mosi = gpiob
+        .pb5
+        .into_floating_input(&mut gpiob.moder, &mut gpiob.pupdr)
+        .into_af5(&mut gpiob.moder, &mut gpiob.afrl);
+    let spi = Spi::spi1(
+        dp.SPI1,
+        (spi_sck, spi_miso, spi_mosi),
+        spi_mode(),
+        clock_mhz(),
+        clocks,
+        &mut rcc.apb2,
+    );
+    let nrf24_ce = gpioa
+        .pa10
+        .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper);
+    let nrf24_csn = gpiob
+        .pb12
+        .into_push_pull_output(&mut gpiob.moder, &mut gpiob.otyper);
+    let mut nrf24_irq = gpioa
+        .pa8
+        .into_pull_up_input(&mut gpioa.moder, &mut gpioa.pupdr);
+    let mut nrf24l01 =
+        NRF24L01::new(nrf24_ce, nrf24_csn, spi).expect("Failed to initialize NRF24L01");
+
+    nrf24l01
+        .set_rf(&DataRate::R2Mbps, 3)
+        .expect("Failed to set RF power");
+    nrf24l01.set_frequency(0).expect("Failed to set channel");
+    nrf24l01
+        .set_auto_ack(&[true, true, true, true, true, true])
+        .expect("Failed to enable auto ACK");
+
+    nrf24_irq.make_interrupt_source(&mut dp.SYSCFG, &mut rcc.apb2);
+    nrf24_irq.trigger_on_edge(&mut dp.EXTI, Edge::FALLING);
+    nrf24_irq.clear_interrupt_pending_bit();
+    nrf24_irq.enable_interrupt(&mut dp.EXTI);
+    free(|cs| {
+        NRF24_IRQ.borrow(cs).replace(Some(nrf24_irq));
+    });
+
+    info!("NRF24L01 initialized");
+
     unsafe {
         NVIC::unmask(Interrupt::OTG_FS);
+        NVIC::unmask(Interrupt::EXTI9_5);
     }
 
     let mut btn_state = false;
@@ -195,6 +250,18 @@ fn OTG_FS() {
         let mut buf = [0u8; 64];
         if usb_dev.poll(&mut [usb_ser, usb_hid]) {
             usb_ser.read(&mut buf).ok();
+        }
+    });
+}
+
+#[interrupt]
+fn EXTI9_5() {
+    free(|cs| {
+        let mut nrf24_irq_ref = NRF24_IRQ.borrow(cs).borrow_mut();
+        let nrf24_irq = nrf24_irq_ref.as_mut().unwrap();
+
+        if nrf24_irq.check_interrupt() {
+            nrf24_irq.clear_interrupt_pending_bit();
         }
     });
 }
