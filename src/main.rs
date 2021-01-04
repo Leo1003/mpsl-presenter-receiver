@@ -2,6 +2,8 @@
 #![no_main]
 
 #[macro_use]
+extern crate bitflags;
+#[macro_use]
 extern crate cortex_m_rt;
 #[macro_use]
 extern crate log;
@@ -11,6 +13,7 @@ use core::cell::RefCell;
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
 use embedded_nrf24l01::{setup::*, Configuration, CrcMode, DataRate, NRF24L01};
+use hid_report::MouseReport;
 use nrf24_mode::{NRF24Device, NRF24Mode};
 use panic_semihosting as _;
 use stm32l4xx_hal::{
@@ -23,7 +26,6 @@ use stm32l4xx_hal::{
 };
 use usb_device::{class_prelude::UsbBusAllocator, prelude::*};
 use usbd_hid::descriptor::generator_prelude::*;
-use usbd_hid::descriptor::MouseReport;
 use usbd_hid::hid_class::HIDClass;
 use usbd_serial::SerialPort;
 
@@ -43,6 +45,7 @@ static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
 
+mod hid_report;
 mod nrf24_mode;
 mod usb_logger;
 
@@ -140,11 +143,7 @@ fn main() -> ! {
         USB_BUS = Some(usb_bus);
     });
 
-    let action = MouseReport {
-        x: 8,
-        y: -8,
-        buttons: 0,
-    };
+    let action = MouseReport::with_position(8, -8);
 
     free(|cs| {
         // Safety: Interrupt-free section
@@ -225,6 +224,12 @@ fn main() -> ! {
     nrf24l01
         .set_interrupt_mask(false, true, true)
         .expect("Failed to set interrupt mask");
+
+    free(|cs| {
+        NRF24
+            .borrow(cs)
+            .replace(Some(NRF24Mode::Rx(nrf24l01.rx().unwrap())));
+    });
 
     info!("NRF24L01 initialized");
 
