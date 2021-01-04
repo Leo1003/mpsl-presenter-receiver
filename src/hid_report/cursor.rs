@@ -25,6 +25,7 @@ pub struct CursorReport {
     pub y: u16,
 }
 
+#[allow(dead_code)]
 impl CursorReport {
     pub fn with_buttons(buttons: MouseButtons) -> Self {
         Self {

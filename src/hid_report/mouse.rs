@@ -28,6 +28,7 @@ pub struct MouseReport {
     pub wheel: i8,
 }
 
+#[allow(dead_code)]
 impl MouseReport {
     pub fn with_buttons(buttons: MouseButtons) -> Self {
         Self {
