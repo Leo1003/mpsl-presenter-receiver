@@ -198,11 +198,11 @@ fn main() -> ! {
         clocks,
         &mut rcc.apb2,
     );
-    let nrf24_ce = gpioa
-        .pa10
-        .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper);
+    let nrf24_ce = gpiob
+        .pb9
+        .into_push_pull_output(&mut gpiob.moder, &mut gpiob.otyper);
     let nrf24_csn = gpiob
-        .pb12
+        .pb8
         .into_push_pull_output(&mut gpiob.moder, &mut gpiob.otyper);
     let mut nrf24l01 =
         NRF24L01::new(nrf24_ce, nrf24_csn, spi).expect("Failed to initialize NRF24L01");

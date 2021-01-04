@@ -8,8 +8,8 @@ use stm32l4xx_hal::{gpio::*, spi::Spi};
 
 pub type NRF24Device = NRF24L01<
     Infallible,
-    PA10<Output<PushPull>>,
-    PB12<Output<PushPull>>,
+    PB9<Output<PushPull>>,
+    PB8<Output<PushPull>>,
     Spi<
         SPI1,
         (
