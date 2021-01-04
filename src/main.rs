@@ -13,7 +13,7 @@ use core::cell::RefCell;
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
 use embedded_nrf24l01::{setup::*, Configuration, CrcMode, DataRate, NRF24L01};
-use hid_report::MouseReport;
+use hid_report::{CursorReport, MouseReport};
 use nrf24_mode::{NRF24Device, NRF24Mode};
 use panic_semihosting as _;
 use stm32l4xx_hal::{
@@ -41,7 +41,8 @@ type UsbType = UsbBus<USB>;
 
 static mut USB_BUS: Option<UsbBusAllocator<UsbType>> = None;
 static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
-static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
+static USB_HID_CURSOR: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
+static USB_HID_MOUSE: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
 
@@ -143,18 +144,24 @@ fn main() -> ! {
         USB_BUS = Some(usb_bus);
     });
 
-    let action = MouseReport::with_position(8, -8);
+    let mut action = CursorReport::with_position(2048, 950);
 
     free(|cs| {
         // Safety: Interrupt-free section
         USB_SER
             .borrow(cs)
             .replace(Some(SerialPort::new(unsafe { USB_BUS.as_ref().unwrap() })));
-        USB_HID.borrow(cs).replace(Some(HIDClass::new(
+        USB_HID_CURSOR.borrow(cs).replace(Some(HIDClass::new(
+            unsafe { USB_BUS.as_ref().unwrap() },
+            CursorReport::desc(),
+            100,
+        )));
+        /*
+        USB_HID_MOUSE.borrow(cs).replace(Some(HIDClass::new(
             unsafe { USB_BUS.as_ref().unwrap() },
             MouseReport::desc(),
             100,
-        )));
+        )));*/
         USB_DEV.borrow(cs).replace(Some(
             UsbDeviceBuilder::new(
                 unsafe { USB_BUS.as_ref().unwrap() },
@@ -240,18 +247,22 @@ fn main() -> ! {
 
     let mut btn_state = false;
 
+    let mut add_off: u16 = 1;
     loop {
         if usr_btn.is_low().unwrap() {
             btn_state = true;
         } else if btn_state && usr_btn.is_high().unwrap() {
             btn_state = false;
             free(|cs| {
-                let mut usb_hid_ref = USB_HID.borrow(cs).borrow_mut();
-                let usb_hid = usb_hid_ref.as_mut().unwrap();
+                let mut usb_hid_cursor_ref = USB_HID_CURSOR.borrow(cs).borrow_mut();
+                let usb_hid_cursor = usb_hid_cursor_ref.as_mut().unwrap();
 
-                usb_hid.push_input(&action).ok();
+                usb_hid_cursor.push_input(&action).ok();
                 debug!("action: {:?}", &action);
             });
+
+            action.x = action.x.wrapping_add(add_off.wrapping_mul(2));
+            action.y = action.y.wrapping_add(add_off.wrapping_add(152));
         }
 
         free(|cs| {
@@ -270,6 +281,8 @@ fn main() -> ! {
                 }
             }
         });
+
+        add_off = add_off.wrapping_add(2);
     }
 }
 
@@ -278,13 +291,15 @@ fn OTG_FS() {
     free(|cs| {
         let mut usb_dev_ref = USB_DEV.borrow(cs).borrow_mut();
         let usb_dev = usb_dev_ref.as_mut().unwrap();
-        let mut usb_hid_ref = USB_HID.borrow(cs).borrow_mut();
-        let usb_hid = usb_hid_ref.as_mut().unwrap();
+        let mut usb_hid_cursor_ref = USB_HID_CURSOR.borrow(cs).borrow_mut();
+        let usb_hid_cursor = usb_hid_cursor_ref.as_mut().unwrap();
+        // let mut usb_hid_mouse_ref = USB_HID_MOUSE.borrow(cs).borrow_mut();
+        // let usb_hid_mouse = usb_hid_mouse_ref.as_mut().unwrap();
         let mut usb_ser_ref = USB_SER.borrow(cs).borrow_mut();
         let usb_ser = usb_ser_ref.as_mut().unwrap();
 
         let mut buf = [0u8; 64];
-        if usb_dev.poll(&mut [usb_ser, usb_hid]) {
+        if usb_dev.poll(&mut [usb_ser, usb_hid_cursor/* , usb_hid_mouse*/]) {
             usb_ser.read(&mut buf).ok();
         }
     });
