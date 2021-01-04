@@ -1,7 +1,7 @@
 use crate::USB_SER;
 use core::fmt::{self, Write};
 use cortex_m::interrupt::free;
-use log::{Log, LevelFilter, Metadata, Record};
+use log::{LevelFilter, Log, Metadata, Record};
 
 #[derive(Clone, Debug)]
 pub struct UsbLogger;
@@ -37,7 +37,14 @@ impl Log for UsbLogger {
         if self.enabled(record.metadata()) {
             let mut logger = self.clone();
             if let Some(module_path) = record.module_path_static() {
-                write!(&mut logger, "[{}] {}: {}\r\n", record.level(), module_path, record.args()).ok();
+                write!(
+                    &mut logger,
+                    "[{}] {}: {}\r\n",
+                    record.level(),
+                    module_path,
+                    record.args()
+                )
+                .ok();
             } else {
                 write!(&mut logger, "[{}] {}\r\n", record.level(), record.args()).ok();
             }
@@ -46,9 +53,7 @@ impl Log for UsbLogger {
 
     fn flush(&self) {
         free(|cs| {
-            let mut usb_ser_ref = USB_SER
-                .borrow(cs)
-                .borrow_mut();
+            let mut usb_ser_ref = USB_SER.borrow(cs).borrow_mut();
             let usb_ser = usb_ser_ref.as_mut().unwrap();
 
             usb_ser.flush().ok();

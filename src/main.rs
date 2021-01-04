@@ -10,7 +10,8 @@ use core::cell::RefCell;
 
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
-use embedded_nrf24l01::{setup::*, Configuration, DataRate, RxMode, StandbyMode, TxMode, NRF24L01};
+use embedded_nrf24l01::{setup::*, Configuration, CrcMode, DataRate, NRF24L01};
+use nrf24_mode::{NRF24Device, NRF24Mode};
 use panic_semihosting as _;
 use stm32l4xx_hal::{
     gpio::{Edge, Input, PullUp, PA8},
@@ -29,6 +30,9 @@ use usbd_serial::SerialPort;
 
 use usb_logger::UsbLogger;
 
+const NRF24_ADDRESS: &[u8; 5] = b"\x2f\xa6\x37\x89\x73";
+const NRF24_CHANNEL: u8 = 82;
+
 static mut EP_MEMORY: [u32; 320] = [0; 320];
 
 type MutexCell<T> = Mutex<RefCell<Option<T>>>;
@@ -39,7 +43,9 @@ static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 static NRF24_IRQ: MutexCell<PA8<Input<PullUp>>> = Mutex::new(RefCell::new(None));
+static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
 
+mod nrf24_mode;
 mod usb_logger;
 
 static USB_LOGGER: UsbLogger = UsbLogger;
@@ -90,6 +96,7 @@ fn main() -> ! {
     let mut rcc = dp.RCC.constrain();
     let mut pwr = dp.PWR.constrain(&mut rcc.apb1r1);
 
+    // Set HCLK to 48MHz
     let clocks = rcc
         .cfgr
         .pll_source(PllSource::HSI16)
@@ -98,7 +105,7 @@ fn main() -> ! {
         .pclk1(24.mhz())
         .pclk2(24.mhz())
         .freeze(&mut flash.acr, &mut pwr);
-
+    // Output 48MHz to USB clock source
     enable_pllq_48mhz();
 
     enable_crs();
@@ -106,6 +113,7 @@ fn main() -> ! {
     // disable Vddusb power isolation
     enable_usb_pwr();
 
+    // Setup basic GPIO
     let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
     let mut gpiob = dp.GPIOB.split(&mut rcc.ahb2);
     let mut gpioc = dp.GPIOC.split(&mut rcc.ahb2);
@@ -113,6 +121,7 @@ fn main() -> ! {
         .pc13
         .into_pull_up_input(&mut gpioc.moder, &mut gpioc.pupdr);
 
+    // Setup USB
     let usb = USB {
         usb_global: dp.OTG_FS_GLOBAL,
         usb_device: dp.OTG_FS_DEVICE,
@@ -164,6 +173,7 @@ fn main() -> ! {
     USB_LOGGER.init();
     info!("USB initialized");
 
+    // Setup NRF24L01
     let spi_sck = gpiob
         .pb3
         .into_floating_input(&mut gpiob.moder, &mut gpiob.pupdr)
@@ -199,17 +209,36 @@ fn main() -> ! {
     nrf24l01
         .set_rf(&DataRate::R2Mbps, 3)
         .expect("Failed to set RF power");
-    nrf24l01.set_frequency(0).expect("Failed to set channel");
+    nrf24l01
+        .set_frequency(NRF24_CHANNEL)
+        .expect("Failed to set channel");
+    nrf24l01
+        .set_crc(CrcMode::OneByte)
+        .expect("Failed to set CRC setting");
     nrf24l01
         .set_auto_ack(&[true, true, true, true, true, true])
         .expect("Failed to enable auto ACK");
+    nrf24l01
+        .set_rx_addr(0, NRF24_ADDRESS)
+        .expect("Failed to set Rx 0 address");
+    nrf24l01
+        .set_pipes_rx_lengths(&[None; 6])
+        .expect("Failed to set payload length");
+    nrf24l01
+        .set_pipes_rx_enable(&[true, false, false, false, false, false])
+        .expect("Failed to enable Rxs");
+    nrf24l01
+        .set_interrupt_mask(false, true, true)
+        .expect("Failed to set interrupt mask");
 
     nrf24_irq.make_interrupt_source(&mut dp.SYSCFG, &mut rcc.apb2);
     nrf24_irq.trigger_on_edge(&mut dp.EXTI, Edge::FALLING);
-    nrf24_irq.clear_interrupt_pending_bit();
     nrf24_irq.enable_interrupt(&mut dp.EXTI);
     free(|cs| {
         NRF24_IRQ.borrow(cs).replace(Some(nrf24_irq));
+        NRF24
+            .borrow(cs)
+            .replace(Some(NRF24Mode::Rx(nrf24l01.rx().unwrap())));
     });
 
     info!("NRF24L01 initialized");
@@ -234,6 +263,20 @@ fn main() -> ! {
                 debug!("action: {:?}", &action);
             });
         }
+        /*
+        free(|cs| {
+            let mut nrf24l01_ref = NRF24.borrow(cs).borrow_mut();
+            let nrf24l01 = nrf24l01_ref.as_mut().unwrap();
+
+            nrf24l01.configuration_mut().clear_interrupts().ok();
+
+            let nrf24l01_rx = nrf24l01.to_rx();
+            while nrf24l01_rx.can_read().unwrap().is_some() {
+                let packet = nrf24l01_rx.read().unwrap();
+                debug!("Poll data: {:?}", packet.as_ref());
+            }
+        });
+        */
     }
 }
 
@@ -259,9 +302,19 @@ fn EXTI9_5() {
     free(|cs| {
         let mut nrf24_irq_ref = NRF24_IRQ.borrow(cs).borrow_mut();
         let nrf24_irq = nrf24_irq_ref.as_mut().unwrap();
+        let mut nrf24l01_ref = NRF24.borrow(cs).borrow_mut();
+        let nrf24l01 = nrf24l01_ref.as_mut().unwrap();
 
         if nrf24_irq.check_interrupt() {
+            debug!("NRF24L01_IRQ {}", 0);
             nrf24_irq.clear_interrupt_pending_bit();
+            nrf24l01.configuration_mut().clear_interrupts().ok();
+
+            let nrf24l01_rx = nrf24l01.to_rx();
+            while nrf24l01_rx.can_read().unwrap().is_some() {
+                let packet = nrf24l01_rx.read().unwrap();
+                debug!("Received data: {:?}", packet.as_ref());
+            }
         }
     });
 }
