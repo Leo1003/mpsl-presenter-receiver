@@ -27,6 +27,7 @@ pub enum NRF24Mode<D: Device> {
     Rx(RxMode<D>),
 }
 
+#[allow(dead_code)]
 impl<D: Device> NRF24Mode<D> {
     pub fn to_standby(&mut self) -> &mut StandbyMode<D> {
         match self {

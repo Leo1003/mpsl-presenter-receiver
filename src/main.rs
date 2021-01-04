@@ -14,7 +14,6 @@ use embedded_nrf24l01::{setup::*, Configuration, CrcMode, DataRate, NRF24L01};
 use nrf24_mode::{NRF24Device, NRF24Mode};
 use panic_semihosting as _;
 use stm32l4xx_hal::{
-    gpio::{Edge, Input, PullUp, PA8},
     interrupt,
     otg_fs::{UsbBus, USB},
     prelude::*,
@@ -42,7 +41,6 @@ static mut USB_BUS: Option<UsbBusAllocator<UsbType>> = None;
 static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_HID: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
-static NRF24_IRQ: MutexCell<PA8<Input<PullUp>>> = Mutex::new(RefCell::new(None));
 static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
 
 mod nrf24_mode;
@@ -90,7 +88,7 @@ fn enable_pllq_48mhz() {
 
 #[entry]
 fn main() -> ! {
-    let mut dp = Peripherals::take().unwrap();
+    let dp = Peripherals::take().unwrap();
 
     let mut flash = dp.FLASH.constrain();
     let mut rcc = dp.RCC.constrain();
@@ -200,9 +198,6 @@ fn main() -> ! {
     let nrf24_csn = gpiob
         .pb12
         .into_push_pull_output(&mut gpiob.moder, &mut gpiob.otyper);
-    let mut nrf24_irq = gpioa
-        .pa8
-        .into_pull_up_input(&mut gpioa.moder, &mut gpioa.pupdr);
     let mut nrf24l01 =
         NRF24L01::new(nrf24_ce, nrf24_csn, spi).expect("Failed to initialize NRF24L01");
 
@@ -231,16 +226,6 @@ fn main() -> ! {
         .set_interrupt_mask(false, true, true)
         .expect("Failed to set interrupt mask");
 
-    nrf24_irq.make_interrupt_source(&mut dp.SYSCFG, &mut rcc.apb2);
-    nrf24_irq.trigger_on_edge(&mut dp.EXTI, Edge::FALLING);
-    nrf24_irq.enable_interrupt(&mut dp.EXTI);
-    free(|cs| {
-        NRF24_IRQ.borrow(cs).replace(Some(nrf24_irq));
-        NRF24
-            .borrow(cs)
-            .replace(Some(NRF24Mode::Rx(nrf24l01.rx().unwrap())));
-    });
-
     info!("NRF24L01 initialized");
 
     unsafe {
@@ -263,7 +248,7 @@ fn main() -> ! {
                 debug!("action: {:?}", &action);
             });
         }
-        /*
+
         free(|cs| {
             let mut nrf24l01_ref = NRF24.borrow(cs).borrow_mut();
             let nrf24l01 = nrf24l01_ref.as_mut().unwrap();
@@ -273,10 +258,13 @@ fn main() -> ! {
             let nrf24l01_rx = nrf24l01.to_rx();
             while nrf24l01_rx.can_read().unwrap().is_some() {
                 let packet = nrf24l01_rx.read().unwrap();
-                debug!("Poll data: {:?}", packet.as_ref());
+
+                match core::str::from_utf8(packet.as_ref()) {
+                    Ok(s) => debug!("Received string: {}", s),
+                    Err(_) => debug!("Received binary: {:?}", packet.as_ref()),
+                }
             }
         });
-        */
     }
 }
 
@@ -293,28 +281,6 @@ fn OTG_FS() {
         let mut buf = [0u8; 64];
         if usb_dev.poll(&mut [usb_ser, usb_hid]) {
             usb_ser.read(&mut buf).ok();
-        }
-    });
-}
-
-#[interrupt]
-fn EXTI9_5() {
-    free(|cs| {
-        let mut nrf24_irq_ref = NRF24_IRQ.borrow(cs).borrow_mut();
-        let nrf24_irq = nrf24_irq_ref.as_mut().unwrap();
-        let mut nrf24l01_ref = NRF24.borrow(cs).borrow_mut();
-        let nrf24l01 = nrf24l01_ref.as_mut().unwrap();
-
-        if nrf24_irq.check_interrupt() {
-            debug!("NRF24L01_IRQ {}", 0);
-            nrf24_irq.clear_interrupt_pending_bit();
-            nrf24l01.configuration_mut().clear_interrupts().ok();
-
-            let nrf24l01_rx = nrf24l01.to_rx();
-            while nrf24l01_rx.can_read().unwrap().is_some() {
-                let packet = nrf24l01_rx.read().unwrap();
-                debug!("Received data: {:?}", packet.as_ref());
-            }
         }
     });
 }
