@@ -1,7 +1,8 @@
 use crate::USB_SER;
 use core::fmt::{self, Write};
-use cortex_m::interrupt::free;
+use cortex_m::{asm, interrupt::free};
 use log::{LevelFilter, Log, Metadata, Record};
+use usb_device::UsbError;
 
 #[derive(Clone, Debug)]
 pub struct UsbLogger;
@@ -22,7 +23,19 @@ impl Write for UsbLogger {
                 .map_err(|_| fmt::Error)?;
             let usb_ser = usb_ser_ref.as_mut().unwrap();
 
-            usb_ser.write(s.as_bytes()).map_err(|_| fmt::Error)
+            for data in s.as_bytes().chunks(64) {
+                if let Err(e) = usb_ser.write(data) {
+                    if matches!(e, UsbError::WouldBlock) {
+                        return Err(fmt::Error);
+                    }
+                    while let Err(_) = usb_ser.flush() {
+                        asm::nop();
+                    }
+                    // Retry again
+                    usb_ser.write(data).ok();
+                }
+            }
+            Ok(())
         })?;
         Ok(())
     }

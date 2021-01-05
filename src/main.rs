@@ -13,7 +13,7 @@ use core::cell::RefCell;
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
 use embedded_nrf24l01::{setup::*, Configuration, CrcMode, DataRate, NRF24L01};
-use hid_report::{CursorReport, MouseReport};
+use hid_report::{CursorReport, KeyboardReport, MouseReport};
 use nrf24_mode::{NRF24Device, NRF24Mode};
 use panic_semihosting as _;
 use stm32l4xx_hal::{
@@ -43,6 +43,7 @@ static mut USB_BUS: Option<UsbBusAllocator<UsbType>> = None;
 static USB_DEV: MutexCell<UsbDevice<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_HID_CURSOR: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_HID_MOUSE: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
+static USB_HID_KBD: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
 
@@ -156,12 +157,16 @@ fn main() -> ! {
             CursorReport::desc(),
             100,
         )));
-        /*
         USB_HID_MOUSE.borrow(cs).replace(Some(HIDClass::new(
             unsafe { USB_BUS.as_ref().unwrap() },
             MouseReport::desc(),
             100,
-        )));*/
+        )));
+        USB_HID_KBD.borrow(cs).replace(Some(HIDClass::new(
+            unsafe { USB_BUS.as_ref().unwrap() },
+            KeyboardReport::desc(),
+            100,
+        )));
         USB_DEV.borrow(cs).replace(Some(
             UsbDeviceBuilder::new(
                 unsafe { USB_BUS.as_ref().unwrap() },
@@ -276,7 +281,7 @@ fn main() -> ! {
                 let packet = nrf24l01_rx.read().unwrap();
 
                 match core::str::from_utf8(packet.as_ref()) {
-                    Ok(s) => debug!("Received string: {}", s),
+                    Ok(s) => debug!("Received string: {:?}", s),
                     Err(_) => debug!("Received binary: {:?}", packet.as_ref()),
                 }
             }
@@ -293,13 +298,15 @@ fn OTG_FS() {
         let usb_dev = usb_dev_ref.as_mut().unwrap();
         let mut usb_hid_cursor_ref = USB_HID_CURSOR.borrow(cs).borrow_mut();
         let usb_hid_cursor = usb_hid_cursor_ref.as_mut().unwrap();
-        // let mut usb_hid_mouse_ref = USB_HID_MOUSE.borrow(cs).borrow_mut();
-        // let usb_hid_mouse = usb_hid_mouse_ref.as_mut().unwrap();
+        let mut usb_hid_mouse_ref = USB_HID_MOUSE.borrow(cs).borrow_mut();
+        let usb_hid_mouse = usb_hid_mouse_ref.as_mut().unwrap();
+        let mut usb_hid_kbd_ref = USB_HID_KBD.borrow(cs).borrow_mut();
+        let usb_hid_kbd = usb_hid_kbd_ref.as_mut().unwrap();
         let mut usb_ser_ref = USB_SER.borrow(cs).borrow_mut();
         let usb_ser = usb_ser_ref.as_mut().unwrap();
 
         let mut buf = [0u8; 64];
-        if usb_dev.poll(&mut [usb_ser, usb_hid_cursor/* , usb_hid_mouse*/]) {
+        if usb_dev.poll(&mut [usb_ser, usb_hid_cursor, usb_hid_mouse, usb_hid_kbd]) {
             usb_ser.read(&mut buf).ok();
         }
     });
