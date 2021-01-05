@@ -225,7 +225,7 @@ fn main() -> ! {
         .set_auto_ack(&[true, true, true, true, true, true])
         .expect("Failed to enable auto ACK");
     nrf24l01
-        .set_rx_addr(0, NRF24_ADDRESS)
+        .set_tx_addr(NRF24_ADDRESS)
         .expect("Failed to set Rx 0 address");
     nrf24l01
         .set_pipes_rx_lengths(&[None; 6])
@@ -240,7 +240,7 @@ fn main() -> ! {
     free(|cs| {
         NRF24
             .borrow(cs)
-            .replace(Some(NRF24Mode::Rx(nrf24l01.rx().unwrap())));
+            .replace(Some(NRF24Mode::Tx(nrf24l01.tx().unwrap())));
     });
 
     info!("NRF24L01 initialized");
@@ -252,42 +252,30 @@ fn main() -> ! {
 
     let mut btn_state = false;
 
-    let mut add_off: u16 = 1;
     loop {
+
         if usr_btn.is_low().unwrap() {
             btn_state = true;
         } else if btn_state && usr_btn.is_high().unwrap() {
             btn_state = false;
+
             free(|cs| {
-                let mut usb_hid_cursor_ref = USB_HID_CURSOR.borrow(cs).borrow_mut();
-                let usb_hid_cursor = usb_hid_cursor_ref.as_mut().unwrap();
+                let mut nrf24l01_ref = NRF24.borrow(cs).borrow_mut();
+                let nrf24l01 = nrf24l01_ref.as_mut().unwrap();
 
-                usb_hid_cursor.push_input(&action).ok();
-                debug!("action: {:?}", &action);
-            });
+                nrf24l01.configuration_mut().clear_interrupts().ok();
 
-            action.x = action.x.wrapping_add(add_off.wrapping_mul(2));
-            action.y = action.y.wrapping_add(add_off.wrapping_add(152));
-        }
-
-        free(|cs| {
-            let mut nrf24l01_ref = NRF24.borrow(cs).borrow_mut();
-            let nrf24l01 = nrf24l01_ref.as_mut().unwrap();
-
-            nrf24l01.configuration_mut().clear_interrupts().ok();
-
-            let nrf24l01_rx = nrf24l01.to_rx();
-            while nrf24l01_rx.can_read().unwrap().is_some() {
-                let packet = nrf24l01_rx.read().unwrap();
-
-                match core::str::from_utf8(packet.as_ref()) {
-                    Ok(s) => debug!("Received string: {:?}", s),
-                    Err(_) => debug!("Received binary: {:?}", packet.as_ref()),
+                let nrf24l01_tx = nrf24l01.to_tx();
+                nrf24l01_tx
+                    .set_auto_ack(&[true, true, true, true, true, true])
+                    .expect("Failed to enable auto ACK");
+                nrf24l01_tx.set_auto_retransmit(3, 3)
+                    .expect("Failed to set auto retransmit");
+                if let Err(_) = nrf24l01_tx.send(b"Hello, World") {
+                    warn!("Failed to send");
                 }
-            }
-        });
-
-        add_off = add_off.wrapping_add(2);
+            });
+        }
     }
 }
 
