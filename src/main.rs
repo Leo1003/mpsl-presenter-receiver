@@ -10,6 +10,8 @@ extern crate log;
 
 use core::cell::RefCell;
 
+use app::App;
+use command::Commands;
 use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
 use embedded_nrf24l01::{setup::*, Configuration, CrcMode, DataRate, NRF24L01};
@@ -48,7 +50,9 @@ static USB_HID_KBD: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None)
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
 static SERIAL_BUF: MutexCell<LineBuffer> = Mutex::new(RefCell::new(None));
+static SERIAL_CMD: MutexCell<Commands> = Mutex::new(RefCell::new(None));
 
+mod app;
 mod command;
 mod hid_report;
 mod line_buffer;
@@ -148,8 +152,6 @@ fn main() -> ! {
         // Safety: Interrupt-free section
         USB_BUS = Some(usb_bus);
     });
-
-    let mut action = CursorReport::with_position(2048, 950);
 
     free(|cs| {
         // Safety: Interrupt-free section
@@ -258,23 +260,22 @@ fn main() -> ! {
 
     let mut btn_state = false;
 
-    let mut add_off: u16 = 1;
+    let mut app = App::new();
+
     loop {
         if usr_btn.is_low().unwrap() {
             btn_state = true;
         } else if btn_state && usr_btn.is_high().unwrap() {
             btn_state = false;
-            free(|cs| {
-                let mut usb_hid_cursor_ref = USB_HID_CURSOR.borrow(cs).borrow_mut();
-                let usb_hid_cursor = usb_hid_cursor_ref.as_mut().unwrap();
-
-                usb_hid_cursor.push_input(&action).ok();
-                debug!("action: {:?}", &action);
-            });
-
-            action.x = action.x.wrapping_add(add_off.wrapping_mul(2));
-            action.y = action.y.wrapping_add(add_off.wrapping_add(152));
         }
+
+        free(|cs| {
+            let mut serial_cmd_ref = SERIAL_CMD.borrow(cs).borrow_mut();
+            if let Some(serial_cmd) = *serial_cmd_ref {
+                app.process_cmd(serial_cmd);
+            }
+            *serial_cmd_ref = None;
+        });
 
         free(|cs| {
             let mut nrf24l01_ref = NRF24.borrow(cs).borrow_mut();
@@ -288,11 +289,13 @@ fn main() -> ! {
 
                 if let Ok(s) = core::str::from_utf8(packet.as_ref()) {
                     debug!("Wireless command: {:?}", s);
+                    if let Ok(cmd) = s.trim_end().parse::<Commands>() {
+                        debug!("Parsed command: {:?}", cmd);
+                        app.process_cmd(cmd);
+                    };
                 }
             }
         });
-
-        add_off = add_off.wrapping_add(2);
     }
 }
 
@@ -322,6 +325,10 @@ fn OTG_FS() {
         if let Ok(cmdline) = serial_buf.get_line(&mut buf) {
             drop(usb_ser_ref);
             debug!("Serial command: {:?}", cmdline.trim_end());
+            if let Ok(cmd) = cmdline.trim_end().parse::<Commands>() {
+                debug!("Parsed command: {:?}", cmd);
+                SERIAL_CMD.borrow(cs).replace(Some(cmd));
+            };
         }
     });
 }

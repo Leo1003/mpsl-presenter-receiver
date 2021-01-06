@@ -3,5 +3,5 @@ mod keyboard;
 mod mouse;
 
 pub use cursor::CursorReport;
-pub use keyboard::KeyboardReport;
+pub use keyboard::{KeyboardModifiers, KeyboardReport};
 pub use mouse::{MouseButtons, MouseReport};
