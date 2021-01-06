@@ -47,6 +47,7 @@ static USB_HID_KBD: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None)
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
 
+mod command;
 mod hid_report;
 mod nrf24_mode;
 mod usb_logger;
