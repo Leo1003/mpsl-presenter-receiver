@@ -9,6 +9,7 @@ pub enum Commands {
     MouseUp(MouseButtons),
     KeyDown(u8),
     KeyUp(u8),
+    Wheel(i8),
 }
 
 impl FromStr for Commands {
@@ -24,6 +25,7 @@ impl FromStr for Commands {
                 "mu" => parse_mu(argv),
                 "kd" => parse_kd(argv),
                 "ku" => parse_ku(argv),
+                "wh" => parse_wh(argv),
                 _ => Err(()),
             }
         } else {
@@ -123,6 +125,21 @@ where
         let keycode: u8 = arg_key.parse().map_err(|_| ())?;
 
         Ok(Commands::KeyUp(keycode))
+    } else {
+        Err(())
+    }
+}
+
+fn parse_wh<'a, I>(mut iter: I) -> Result<Commands, ()>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let arg_wheel = iter.next();
+
+    if let Some(arg_wheel) = arg_wheel {
+        let wheel: i8 = arg_wheel.parse().map_err(|_| ())?;
+
+        Ok(Commands::Wheel(wheel))
     } else {
         Err(())
     }

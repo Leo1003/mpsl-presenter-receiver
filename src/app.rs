@@ -51,6 +51,9 @@ impl App {
             Commands::RelMove(x, y) => {
                 send_mouse_report(x, y, self.mouse_pressed);
             }
+            Commands::Wheel(w) => {
+                send_wheel_report(w, self.mouse_pressed);
+            }
         }
     }
 
