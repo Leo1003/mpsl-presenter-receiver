@@ -1,5 +1,5 @@
-use usbd_hid::descriptor::{gen_hid_descriptor, generator_prelude::*};
 use super::MouseButtons;
+use usbd_hid::descriptor::{gen_hid_descriptor, generator_prelude::*};
 
 #[gen_hid_descriptor(
     (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = MOUSE) = {

@@ -286,9 +286,8 @@ fn main() -> ! {
             while nrf24l01_rx.can_read().unwrap().is_some() {
                 let packet = nrf24l01_rx.read().unwrap();
 
-                match core::str::from_utf8(packet.as_ref()) {
-                    Ok(s) => debug!("Received string: {:?}", s),
-                    Err(_) => debug!("Received binary: {:?}", packet.as_ref()),
+                if let Ok(s) = core::str::from_utf8(packet.as_ref()) {
+                    debug!("Wireless command: {:?}", s);
                 }
             }
         });
@@ -322,7 +321,7 @@ fn OTG_FS() {
 
         if let Ok(cmdline) = serial_buf.get_line(&mut buf) {
             drop(usb_ser_ref);
-            info!("Received command: {}", cmdline.trim_end());
+            debug!("Serial command: {:?}", cmdline.trim_end());
         }
     });
 }
