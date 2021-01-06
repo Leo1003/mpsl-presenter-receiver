@@ -14,6 +14,7 @@ use cortex_m::interrupt::{free, Mutex};
 use cortex_m::peripheral::NVIC;
 use embedded_nrf24l01::{setup::*, Configuration, CrcMode, DataRate, NRF24L01};
 use hid_report::{CursorReport, KeyboardReport, MouseReport};
+use line_buffer::LineBuffer;
 use nrf24_mode::{NRF24Device, NRF24Mode};
 use panic_semihosting as _;
 use stm32l4xx_hal::{
@@ -46,9 +47,11 @@ static USB_HID_MOUSE: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(Non
 static USB_HID_KBD: MutexCell<HIDClass<UsbType>> = Mutex::new(RefCell::new(None));
 static USB_SER: MutexCell<SerialPort<UsbType>> = Mutex::new(RefCell::new(None));
 static NRF24: MutexCell<NRF24Mode<NRF24Device>> = Mutex::new(RefCell::new(None));
+static SERIAL_BUF: MutexCell<LineBuffer> = Mutex::new(RefCell::new(None));
 
 mod command;
 mod hid_report;
+mod line_buffer;
 mod nrf24_mode;
 mod usb_logger;
 
@@ -177,7 +180,9 @@ fn main() -> ! {
             .product("Smart presenter")
             .serial_number("TEST0000")
             .build(),
-        ))
+        ));
+
+        SERIAL_BUF.borrow(cs).replace(Some(LineBuffer::new()));
     });
 
     USB_LOGGER.init();
@@ -294,6 +299,7 @@ fn main() -> ! {
 
 #[interrupt]
 fn OTG_FS() {
+    let mut buf = [0u8; 64];
     free(|cs| {
         let mut usb_dev_ref = USB_DEV.borrow(cs).borrow_mut();
         let usb_dev = usb_dev_ref.as_mut().unwrap();
@@ -305,10 +311,18 @@ fn OTG_FS() {
         let usb_hid_kbd = usb_hid_kbd_ref.as_mut().unwrap();
         let mut usb_ser_ref = USB_SER.borrow(cs).borrow_mut();
         let usb_ser = usb_ser_ref.as_mut().unwrap();
+        let mut serial_buf_ref = SERIAL_BUF.borrow(cs).borrow_mut();
+        let serial_buf = serial_buf_ref.as_mut().unwrap();
 
-        let mut buf = [0u8; 64];
         if usb_dev.poll(&mut [usb_ser, usb_hid_cursor, usb_hid_mouse, usb_hid_kbd]) {
-            usb_ser.read(&mut buf).ok();
+            if let Ok(len) = usb_ser.read(&mut buf) {
+                serial_buf.feed(&buf[..len]).ok();
+            }
+        }
+
+        if let Ok(cmdline) = serial_buf.get_line(&mut buf) {
+            drop(usb_ser_ref);
+            info!("Received command: {}", cmdline.trim_end());
         }
     });
 }
