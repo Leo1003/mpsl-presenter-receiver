@@ -76,7 +76,7 @@ where
 
     if let Some(arg_btn) = arg_btn {
         let btn_bits: u8 = arg_btn.parse().map_err(|_| ())?;
-        let btn = MouseButtons::from_bits(btn_bits).ok_or_else(|| ())?;
+        let btn = MouseButtons::from_bits(btn_bits).ok_or(())?;
 
         Ok(Commands::MouseDown(btn))
     } else {
@@ -92,7 +92,7 @@ where
 
     if let Some(arg_btn) = arg_btn {
         let btn_bits: u8 = arg_btn.parse().map_err(|_| ())?;
-        let btn = MouseButtons::from_bits(btn_bits).ok_or_else(|| ())?;
+        let btn = MouseButtons::from_bits(btn_bits).ok_or(())?;
 
         Ok(Commands::MouseUp(btn))
     } else {

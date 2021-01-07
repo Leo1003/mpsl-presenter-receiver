@@ -28,7 +28,7 @@ impl Write for UsbLogger {
                     if matches!(e, UsbError::WouldBlock) {
                         return Err(fmt::Error);
                     }
-                    while let Err(_) = usb_ser.flush() {
+                    while usb_ser.flush().is_err() {
                         asm::nop();
                     }
                     // Retry again

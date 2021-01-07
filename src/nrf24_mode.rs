@@ -28,6 +28,7 @@ pub enum NRF24Mode<D: Device> {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::wrong_self_convention)]
 impl<D: Device> NRF24Mode<D> {
     pub fn to_standby(&mut self) -> &mut StandbyMode<D> {
         match self {

@@ -51,7 +51,7 @@ impl LineBuffer {
         }
 
         if let Some(copylen) = copylen {
-            &mut s[..copylen].copy_from_slice(&self.buf[..copylen]);
+            s[..copylen].copy_from_slice(&self.buf[..copylen]);
             let linestr = str::from_utf8(&s[..copylen]).map_err(|_| ())?;
             // Remove copied data
             self.buf.copy_within(copylen.., 0);
