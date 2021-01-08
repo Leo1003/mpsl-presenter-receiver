@@ -128,6 +128,9 @@ fn main() -> ! {
     let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
     let mut gpiob = dp.GPIOB.split(&mut rcc.ahb2);
     let mut gpioc = dp.GPIOC.split(&mut rcc.ahb2);
+    let mut led = gpioa
+        .pa5
+        .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper);
     let usr_btn = gpioc
         .pc13
         .into_pull_up_input(&mut gpioc.moder, &mut gpioc.pupdr);
@@ -262,7 +265,16 @@ fn main() -> ! {
 
     let mut app = App::new();
 
+    let mut led_cnt: u32 = 0;
     loop {
+        if led_cnt % 1000 == 0 {
+            let led_state = led_cnt / 1000;
+            if led_state % 2 == 0 {
+                led.set_high().ok();
+            } else {
+                led.set_low().ok();
+            }
+        }
         if usr_btn.is_low().unwrap() {
             btn_state = true;
         } else if btn_state && usr_btn.is_high().unwrap() {
@@ -296,6 +308,8 @@ fn main() -> ! {
                 }
             }
         });
+
+        led_cnt = led_cnt.wrapping_add(1);
     }
 }
 
